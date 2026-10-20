@@ -1,0 +1,6 @@
+/* GovtGuide AI Application Utilities */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}

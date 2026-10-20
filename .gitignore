@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Environment & secrets
+.env
+*.env.local
+backend/.env
+# Frontend .env holds only the public API base URL (no secrets) - safe to track
+!frontend/.env
+
+# Local dev database (contains demo data, not for production persistence)
+backend/data/local_db.json
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Editor / OS
+.vscode/*
+!.vscode/settings.json
+.DS_Store
+Thumbs.db

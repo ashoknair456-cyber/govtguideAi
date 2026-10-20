@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-10-18T02:59:15.034044+00:00",
+  "environment": "synthetic_research_only",
+  "dataset": {
+    "active_schemes": 30,
+    "synthetic_profiles": 8,
+    "case_coverage": [
+      "boundary",
+      "clearly_eligible",
+      "clearly_ineligible",
+      "conflicting",
+      "incomplete",
+      "special_needs"
+    ]
+  },
+  "metrics": {
+    "total_assessments": 240,
+    "engine_error_rate_pct": 0.0,
+    "rule_traceability_pct": 100.0,
+    "unsupported_claim_frequency_pct": 0.0,
+    "missing_information_detection_pct": 100.0,
+    "engine_self_consistency_pct": 100.0,
+    "determinism_stability_pct": 100.0,
+    "median_engine_latency_ms": 0.0032,
+    "p95_engine_latency_ms": 0.0107
+  },
+  "status_distribution": {
+    "DOES NOT MATCH STATED CRITERIA": 126,
+    "MAY BE ELIGIBLE": 85,
+    "MORE INFORMATION REQUIRED": 29
+  },
+  "counts": {
+    "consistency_tested_schemes": 30,
+    "determinism_checks": 40,
+    "incomplete_profiles": 1
+  },
+  "notes": [
+    "Metrics are computed from real engine runs; none are asserted or invented.",
+    "Self-consistency measures whether a profile built to satisfy all eq/in/gte/lte rules avoids any failed-rule verdict (engine agrees with its own rule semantics).",
+    "Synthetic data is in-memory only and never persisted to citizen collections."
+  ]
+}
