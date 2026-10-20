@@ -3,13 +3,11 @@ import json
 import uuid
 import logging
 from typing import Dict, List, Any, Optional
-from motor.motor_asyncio import AsyncIOMotorClient
-from config import settings
 
 logger = logging.getLogger("govguide.database")
 logging.basicConfig(level=logging.INFO)
 
-# File-based JSON Database fallback for offline/demo robustness
+# File-based JSON Database - the app's only data store.
 class JSONCollection:
     def __init__(self, name: str, file_path: str):
         self.name = name
@@ -210,39 +208,13 @@ class JSONDatabase:
         return self.collections[name]
 
 # Database Selection Logic
-db_client = None
-db = None
-is_mock_db = False
+# MongoDB has been removed: the app serves all data from the local JSON file
+# (backend/data/local_db.json), which is bundled with the project.
+JSON_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "local_db.json")
 
-def check_mongodb_port(uri: str) -> bool:
-    import socket
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(uri)
-        host = parsed.hostname or "localhost"
-        port = parsed.port or 27017
-        s = socket.create_connection((host, port), timeout=0.2)
-        s.close()
-        return True
-    except Exception:
-        return False
-
-if check_mongodb_port(settings.MONGODB_URI):
-    try:
-        db_client = AsyncIOMotorClient(settings.MONGODB_URI, serverSelectionTimeoutMS=2000)
-        db = db_client[settings.DB_NAME]
-        is_mock_db = False
-        logger.info("Successfully connected to MongoDB server.")
-    except Exception as e:
-        logger.warning(f"MongoDB client init failed: {e}. Falling back to Local JSON database.")
-        db = JSONDatabase(os.path.join(os.path.dirname(__file__), "data", "local_db.json"))
-        is_mock_db = True
-else:
-    logger.warning("MongoDB port is not reachable. Falling back to Local JSON database.")
-    db = JSONDatabase(os.path.join(os.path.dirname(__file__), "data", "local_db.json"))
-    is_mock_db = True
+db = JSONDatabase(JSON_DB_PATH)
+is_mock_db = True  # Kept for backwards compatibility with existing imports.
 
 def get_db():
-    global db, is_mock_db
     return db
 

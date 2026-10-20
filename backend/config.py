@@ -24,16 +24,17 @@ class Settings:
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
 
     # Database
-    MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    # All app data is served from the bundled local JSON file database
+    # (backend/data/local_db.json). MongoDB is no longer required.
     DB_NAME: str = os.getenv("DB_NAME", "govguide_db")
 
     # Hybrid verified-scheme store (Supabase Postgres). Optional.
     # When empty or unreachable, the scheme store transparently falls back to
-    # the MongoDB/JSON database above, so the app never breaks without Postgres.
+    # the local JSON file database above, so the app never breaks without Postgres.
     # Accepts a full asyncpg DSN, e.g.:
     #   postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres
     SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "").strip()
-    # Master flag to disable the Postgres layer entirely (force Mongo/JSON).
+    # Master flag to disable the Postgres layer entirely (force the JSON file store).
     POSTGRES_ENABLED: bool = os.getenv("POSTGRES_ENABLED", "true").lower() not in ("0", "false", "no")
 
     # Auth / JWT

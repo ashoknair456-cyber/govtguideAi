@@ -72,14 +72,13 @@ app.include_router(features.router, prefix="/api")
 
 @app.get("/health")
 async def health():
-    from database import is_mock_db
     import scheme_db
     return {
         "status": "ok",
         "app": settings.PROJECT_NAME,
         "environment": settings.ENVIRONMENT,
-        "database": "json_fallback" if is_mock_db else "mongodb",
-        "scheme_store": "postgres" if scheme_db.POSTGRES_OK else "mongodb_fallback",
+        "database": "local_json_file",
+        "scheme_store": "postgres" if scheme_db.POSTGRES_OK else "local_json_file",
     }
 
 @app.get("/")
@@ -175,13 +174,13 @@ async def init_scheme_store():
     """
     Best-effort initialization of the optional Supabase/PostgreSQL verified-scheme
     store. If Postgres is not configured or unreachable, everything stays on the
-    MongoDB/JSON fallback - this never blocks or crashes startup.
+    local JSON file database - this never blocks or crashes startup.
     """
     import scheme_db
     import scheme_store
     try:
         if not scheme_db.resolve_status():
-            logger.info("Postgres scheme store not available; using Mongo/JSON fallback.")
+            logger.info("Postgres scheme store not available; using local JSON file store.")
             return
         if await scheme_db.ensure_schema():
             stats = await scheme_store.migrate_from_mongo(get_db())
