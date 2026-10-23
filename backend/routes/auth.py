@@ -19,6 +19,8 @@ except ImportError:
 from database import get_db
 from captcha_service import generate_captcha, verify_captcha
 from otp_service import otp_service
+from user_identity import mint_internal_id
+import user_identity
 
 logger = logging.getLogger("govguide.auth")
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -152,6 +154,7 @@ async def citizen_signup(payload: SignupRequest, db=Depends(get_db)):
 
     user_doc = {
         "_id": clean_phone,
+        "internal_id": mint_internal_id(),
         "phone": clean_phone,
         "email": clean_email,
         "name": payload.full_name.strip(),
@@ -305,6 +308,7 @@ async def verify_otp(payload: OTPVerify, db=Depends(get_db)):
         role = "admin" if phone in ["+919999999999"] else "user"
         user_doc = {
             "_id": phone,
+            "internal_id": mint_internal_id(),
             "phone": phone,
             "name": payload.name or "Citizen",
             "role": role,
@@ -312,6 +316,9 @@ async def verify_otp(payload: OTPVerify, db=Depends(get_db)):
         }
         await users_col.insert_one(user_doc)
         user = user_doc
+
+    # Accounts created before internal_id existed get one now (additive only).
+    user = await user_identity.ensure_persisted(users_col, user)
 
     # Check whether user has already completed onboarding
     profile_col = db["profiles"]
@@ -335,6 +342,7 @@ async def verify_otp(payload: OTPVerify, db=Depends(get_db)):
         "access_token": token,
         "token_type": "bearer",
         "user_id": user["phone"],
+        "internal_id": user.get("internal_id"),
         "role": user.get("role", "user"),
         "full_name": user.get("name") or payload.name or "Citizen",
         "is_new_profile": is_new
@@ -411,6 +419,7 @@ async def google_login(payload: GoogleAuthRequest, db=Depends(get_db)):
         role = "user"
         user_doc = {
             "_id": placeholder_phone,
+            "internal_id": mint_internal_id(),
             "phone": placeholder_phone,
             "email": email,
             "name": name,
@@ -453,11 +462,13 @@ async def google_login(payload: GoogleAuthRequest, db=Depends(get_db)):
         is_new = True
     else:
         is_new = False
+    user = await user_identity.ensure_persisted(users_col, user)
     token = create_access_token({"sub": user["email"], "role": user.get("role", "user"), "name": user.get("name", name)})
     return {
         "access_token": token,
         "token_type": "bearer",
         "user_id": user["email"],
+        "internal_id": user.get("internal_id"),
         "role": user.get("role", "user"),
         "full_name": user.get("name", name),
         "is_new_profile": is_new
@@ -528,6 +539,7 @@ async def firebase_login(payload: FirebaseAuthRequest, db=Depends(get_db)):
     if not user:
         user_doc = {
             "_id": email,
+            "internal_id": mint_internal_id(),
             "email": email,
             "phone": None,
             "name": name,
@@ -554,10 +566,12 @@ async def firebase_login(payload: FirebaseAuthRequest, db=Depends(get_db)):
         "role": user.get("role", "user"),
         "name": user.get("name", name),
     })
+    user = await user_identity.ensure_persisted(users_col, user)
     return {
         "access_token": app_token,
         "token_type": "bearer",
         "user_id": user["_id"],
+        "internal_id": user.get("internal_id"),
         "role": user.get("role", "user"),
         "full_name": user.get("name", name),
         "is_new_profile": is_new,

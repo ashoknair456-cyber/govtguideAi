@@ -207,6 +207,16 @@ class JSONDatabase:
             self.collections[name] = JSONCollection(name, self.file_path)
         return self.collections[name]
 
+    def _read_all(self, name: str):
+        """Return the raw list of documents for a collection (used for migration)."""
+        if not os.path.exists(self.file_path):
+            return []
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                return json.load(f).get(name, [])
+        except Exception:
+            return []
+
 # Database Selection Logic
 # MongoDB has been removed: the app serves all data from the local JSON file
 # (backend/data/local_db.json), which is bundled with the project.
@@ -215,6 +225,26 @@ JSON_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "local_db.json")
 db = JSONDatabase(JSON_DB_PATH)
 is_mock_db = True  # Kept for backwards compatibility with existing imports.
 
+# The store actually served by get_db(). Defaults to the local JSON file store.
+# When a live Neon/PostgreSQL connection is confirmed at startup, main.py calls
+# set_active_db(app_db.get_store()) so every route transparently persists to
+# Postgres WITHOUT any per-route changes. If Postgres is unavailable, this stays
+# on the JSON store so the application never breaks.
+_active_db = db
+
+def set_active_db(store):
+    global _active_db
+    if store is not None:
+        _active_db = store
+    return _active_db
+
+def get_active_db():
+    return _active_db
+
+def is_postgres_active() -> bool:
+    # Imported lazily to avoid a circular import at module load.
+    return _active_db is not db
+
 def get_db():
-    return db
+    return _active_db
 

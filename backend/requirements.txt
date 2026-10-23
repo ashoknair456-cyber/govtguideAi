@@ -6,6 +6,9 @@ cryptography>=41.0.0
 python-multipart>=0.0.20
 httpx>=0.28.0
 python-dotenv>=1.0.1
+# Google Gemini (official Gen AI SDK) for the chatbot. Optional at runtime:
+# if it is missing, the chatbot transparently falls back to the REST call below.
+google-genai>=1.0.0
 # Hybrid verified-scheme store (Supabase Postgres). Optional: app auto-falls
 # back to the local JSON file database when these are missing or the DB is unreachable.
 SQLAlchemy[asyncio]>=2.0.0

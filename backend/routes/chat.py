@@ -1,7 +1,6 @@
 import logging
-import httpx
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from models import ChatInput, ChatMessage
 from database import get_db
 from routes.utils import get_current_user
@@ -12,7 +11,7 @@ from engine import (
     CANNOT_CONFIRM_VERIFY_OFFICIAL,
 )
 from profile_assistant import process_conversational_profile
-from config import settings
+import gemini_client
 
 logger = logging.getLogger("govguide.chat")
 router = APIRouter(prefix="/chat", tags=["Chatbot"])
@@ -55,24 +54,30 @@ TRANSLATIONS = {
     }
 }
 
-async def call_gemini_chat(prompt: str) -> str:
-    """Calls Gemini API with citizen assistance context."""
-    if not settings.GEMINI_API_KEY:
-        return ""
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
-        headers = {"Content-Type": "application/json"}
-        data = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=data, headers=headers, timeout=10.0)
-            if resp.status_code == 200:
-                result = resp.json()
-                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        logger.warning(f"Gemini API chat call failed: {e}")
-    return ""
+# Shared behaviour contract for every Gemini call made by the chatbot.
+SYSTEM_INSTRUCTION = (
+    "You are GovtGuide AI, a friendly, knowledgeable citizen-welfare assistant for India. "
+    "You help users discover government schemes and understand eligibility, benefits, required "
+    "documents, and how to apply. Be conversational, warm, and concise, and use the recent "
+    "conversation to understand follow-up questions. Always reply in the same language the user "
+    "is writing in (English, Hindi, Tamil, Telugu, Malayalam, Marathi, or Bengali). "
+    "Ground every scheme fact ONLY in the verified data you are given; never invent scheme "
+    "names, eligibility rules, benefit amounts, deadlines, or official URLs. If you do not know "
+    "or cannot verify something, clearly admit it and point the user to the official portal. "
+    "GovtGuide AI always redirects citizens to real government portals and never asks for bank "
+    "passwords, transaction PINs, Aadhaar numbers, or OTPs. This is preliminary guidance, not a "
+    "guarantee of approval."
+)
+
+
+async def call_gemini_chat(prompt: str, history_block: str = "") -> str:
+    """Generate a genuine AI reply via the centralized Gemini client.
+
+    Model and key come from backend environment settings only. Returns '' when
+    Gemini is unconfigured or the call fails, so callers can use verified fallback.
+    """
+    full_prompt = (history_block + "\n" + prompt) if history_block else prompt
+    return await gemini_client.generate_text(full_prompt, system=SYSTEM_INSTRUCTION)
 
 @router.post("")
 async def chat_message(payload: ChatInput, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
@@ -106,6 +111,24 @@ async def chat_message(payload: ChatInput, current_user: dict = Depends(get_curr
     schemes_col = db["schemes"]
     cursor = await schemes_col.find({"status": "Active"})
     active_schemes = await cursor.to_list(length=200)
+
+    # Load recent conversation history so follow-up questions resolve correctly.
+    conv_col = db["conversations"]
+    history_rec = await conv_col.find_one({"user_id": current_user["_id"]})
+    prior_messages = (history_rec or {}).get("messages", [])
+    history_block = gemini_client.build_history_block(prior_messages)
+
+    # Only the minimal, scheme-relevant profile context is ever sent to Gemini.
+    profile_context = {
+        "age": profile_dict.get("age"),
+        "gender": profile_dict.get("gender"),
+        "state": profile_dict.get("state"),
+        "district": profile_dict.get("district"),
+        "rural_or_urban": profile_dict.get("rural_or_urban"),
+        "occupation": profile_dict.get("occupation"),
+        "income_range": profile_dict.get("income_range"),
+    }
+    profile_context = {k: v for k, v in profile_context.items() if v not in (None, "", [])}
 
     # ==================== ROLE 1: PROFILE ASSISTANT ====================
     # Check if user message contains profile attributes (e.g. name, age, income, state, student, farmer)
@@ -169,7 +192,7 @@ async def chat_message(payload: ChatInput, current_user: dict = Depends(get_curr
             f"- [Mention required documents]\n"
             f"- [Provide the official link]"
         )
-        ai_resp = await call_gemini_chat(ai_prompt)
+        ai_resp = await call_gemini_chat(ai_prompt, history_block)
         response_text = ai_resp if ai_resp else f"Scheme: {matched_scheme['name']}. Status: {status_val}."
     elif any(kw in user_lower for kw in ["scheme", "schemes", "apply", "eligible", "eligibility", "find", "योजना", "திட்டம்", "పథకం"]):
         # Find top matching schemes based on user profile
@@ -202,12 +225,14 @@ async def chat_message(payload: ChatInput, current_user: dict = Depends(get_curr
     # Fallback to AI prompt or localized default
     if not response_text:
         ai_prompt = (
-            f"You are GovtGuide AI, a knowledgeable, friendly citizen welfare assistant for India. "
-            f"Citizen Profile: {profile_dict}. "
-            f"Citizen query in {lang}: '{user_msg}'. "
-            f"Answer accurately and warmly in the user's language. Clearly state that GovtGuide AI directs citizens to real government portals and never asks for bank pins or sensitive credentials."
+            f"Citizen context (minimal, only if relevant): {profile_context}. "
+            f"Citizen's latest message (language code: {lang}): '{user_msg}'. "
+            f"Respond naturally to whatever the citizen actually asked - this may be a greeting, "
+            f"a general question, a follow-up, or a scheme question. Do NOT force the conversation "
+            f"back to profile collection unless they asked about eligibility. Answer in the user's "
+            f"language, and if a scheme fact is not in the verified data you were given, say so."
         )
-        ai_resp = await call_gemini_chat(ai_prompt)
+        ai_resp = await call_gemini_chat(ai_prompt, history_block)
         response_text = ai_resp if ai_resp else TRANSLATIONS.get(lang, TRANSLATIONS["en"])["chat_fallback"]
 
     # Save to conversation history

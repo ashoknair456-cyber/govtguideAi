@@ -469,12 +469,22 @@ async def get_scheme(db, scheme_id: str) -> Optional[Dict[str, Any]]:
 
 
 # ── Bootstrap: load verified Mongo/JSON schemes into Postgres ───────────────
-def _parse_date(value: Any) -> Optional[str]:
+def _parse_date(value: Any) -> Optional[date]:
+    """Coerce a stored date/timestamp into a real ``datetime.date``.
+
+    asyncpg encodes DATE parameters on the client, so passing the ISO *string*
+    (as the previous version did) fails with
+    ``invalid input for query argument ... ('str' object has no attribute
+    'toordinal')``. Unparseable values become NULL instead of aborting the
+    whole scheme import.
+    """
     iso = _iso(value)
     if not iso:
         return None
-    # Postgres DATE accepts 'YYYY-MM-DD'; take the date part if a time is present.
-    return iso.split("T")[0]
+    try:
+        return date.fromisoformat(iso.split("T")[0].split(" ")[0])
+    except ValueError:
+        return None
 
 
 async def migrate_from_mongo(db) -> Dict[str, int]:

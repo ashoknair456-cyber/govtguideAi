@@ -43,6 +43,9 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str
     user_id: str
+    # Permanent, opaque identifier for the account. Unlike user_id (which is the
+    # login phone/email) it never changes and is safe to reference from features.
+    internal_id: Optional[str] = None
     role: str
     full_name: Optional[str] = None
     is_new_profile: bool = False

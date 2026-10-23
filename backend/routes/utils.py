@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from config import settings
 from database import get_db
+import user_identity
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/verify-otp", auto_error=False)
 
@@ -70,6 +71,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_d
     users_col = db["users"]
     # Sessions are normally keyed by phone, but Google/Firebase accounts are keyed
     # by email (see /api/auth/firebase). Resolve either so both user types work.
+    # The identity always comes from the verified token plus the stored record -
+    # a user id supplied by the frontend is never trusted on its own.
     user = (
         await users_col.find_one({"phone": phone})
         or await users_col.find_one({"email": phone})
@@ -77,7 +80,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_d
     )
     if user is None:
         raise credentials_exception
-    return user
+    return await user_identity.ensure_persisted(users_col, user)
 
 async def get_current_admin(current_user: dict = Depends(get_current_user)):
     if current_user.get("role") != "admin":

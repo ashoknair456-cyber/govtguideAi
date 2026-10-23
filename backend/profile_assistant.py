@@ -1,9 +1,9 @@
 import re
 import json
 import logging
-import httpx
 from typing import Dict, Any, Tuple, List, Optional
 from config import settings
+import gemini_client
 
 logger = logging.getLogger("govguide.profile_assistant")
 
@@ -171,26 +171,9 @@ Return valid JSON with two keys:
 "extracted_fields": {{ ...only the fields found in this message... }},
 "conversational_reply": "A warm, natural 1-2 sentence acknowledgment in the user's language ({lang}) repeating what was noted, and asking the next relevant question."
 """
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
-        headers = {"Content-Type": "application/json"}
-        data = {"contents": [{"parts": [{"text": prompt}]}]}
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=data, headers=headers, timeout=8.0)
-            if resp.status_code == 200:
-                result = resp.json()
-                text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
-                # Clean markdown blocks
-                if text.startswith("```json"):
-                    text = text[7:]
-                if text.startswith("```"):
-                    text = text[3:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                return json.loads(text.strip())
-    except Exception as e:
-        logger.warning(f"Gemini profile extraction failed, falling back to regex: {e}")
-    return None
+    # Route through the centralized Gemini client (official SDK / env model).
+    # Returns None when unconfigured or on failure, so the regex extractor runs.
+    return await gemini_client.generate_json(prompt)
 
 def rule_based_extract(message: str, current_profile: Dict[str, Any]) -> Dict[str, Any]:
     """

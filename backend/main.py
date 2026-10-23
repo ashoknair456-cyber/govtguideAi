@@ -73,13 +73,46 @@ app.include_router(features.router, prefix="/api")
 @app.get("/health")
 async def health():
     import scheme_db
+    from database import is_postgres_active
     return {
         "status": "ok",
         "app": settings.PROJECT_NAME,
         "environment": settings.ENVIRONMENT,
-        "database": "local_json_file",
+        "database": "postgres" if is_postgres_active() else "local_json_file",
         "scheme_store": "postgres" if scheme_db.POSTGRES_OK else "local_json_file",
     }
+
+@app.get("/health/db")
+async def health_db():
+    """Safe database connectivity check for the Postgres/Neon persistent store.
+
+    Runs a real ``SELECT 1`` round-trip plus a live catalog read of the
+    application tables, and reports only booleans, counts and an error class
+    name - never a connection string, host, user or password. When no
+    DATABASE_URL/SUPABASE_DB_URL is configured the app intentionally uses the
+    local JSON file store, which is not an error.
+    """
+    import app_db
+    from database import is_postgres_active
+    info = {
+        "configured": app_db.is_configured(),
+        "connected": False,
+        "active_store": "postgres" if is_postgres_active() else "local_json_file",
+    }
+    if not info["configured"]:
+        info["detail"] = "No Postgres/Neon DATABASE_URL configured; using local JSON file store."
+        return info
+    try:
+        info["connected"] = await app_db.check_connection()
+        if info["connected"]:
+            info["tables"] = await app_db.count_tables()
+            info["detail"] = "Database connection OK."
+        else:
+            info["detail"] = "DATABASE_URL is set but the connection could not be established."
+    except Exception as exc:  # noqa: BLE001 - report class only, never secrets
+        info["detail"] = "Database connection failed: " + type(exc).__name__
+    return info
+
 
 @app.get("/")
 async def root():
@@ -89,6 +122,69 @@ async def root():
         "mode": "Sandbox/Demo Mode",
         "notice": "All data generated here is for demonstration purposes. No actual government transactions are performed."
     }
+
+# Startup: activate the optional persistent Postgres/Neon application store.
+@app.on_event("startup")
+async def init_persistent_store():
+    """Bring the Neon/PostgreSQL persistent store online when configured.
+
+    If DATABASE_URL (or the legacy SUPABASE_DB_URL) is set and reachable, this
+    creates the per-collection tables, idempotently copies existing local JSON
+    data into Postgres (never deleting anything), and switches get_db() to the
+    Postgres store so every existing route transparently persists to Neon.
+    If it is unset or unreachable, the app keeps using the local JSON store.
+    In development this NEVER blocks or crashes startup. In production a JSON
+    file is not an acceptable substitute for the configured database (it is
+    usually ephemeral), so startup fails loudly instead of silently writing to
+    the fallback store and later reporting that Postgres is in use.
+    """
+    import app_db
+    from database import db as json_db, set_active_db
+
+    production = settings.ENVIRONMENT.lower() in ("production", "prod")
+
+    def refuse(reason: str) -> None:
+        """In production, a broken/absent Postgres store is a fatal condition."""
+        if production:
+            logger.error(f"Refusing to start on the JSON fallback store: {reason}")
+            raise RuntimeError(
+                f"ENVIRONMENT=production requires a working DATABASE_URL store ({reason})."
+            )
+
+    try:
+        if not app_db.is_configured():
+            logger.info("Persistent store not configured; using local JSON file store.")
+            refuse("no DATABASE_URL configured")
+            return
+        if await app_db.connect():
+            schema = await app_db.ensure_schema()
+            if schema.get("ok"):
+                stats = await app_db.migrate_from_json(json_db)
+                fk = await app_db.apply_constraints()
+                set_active_db(app_db.get_store())
+                logger.info(
+                    "Persistent store active on Postgres/Neon: "
+                    f"tables_created={len(schema['tables_created'])}, "
+                    f"tables_existing={len(schema['tables_existing'])}, "
+                    f"import={stats}, foreign_keys={len(fk['foreign_keys'])}, "
+                    f"not_validated={fk['not_validated']}"
+                )
+                for warning in schema.get("warnings", []):
+                    logger.info(f"Schema note: {warning}")
+            else:
+                logger.warning(
+                    f"Persistent store schema incomplete ({schema.get('tables_missing')}); "
+                    "keeping local JSON file store."
+                )
+                refuse(f"schema incomplete: {schema.get('tables_missing')}")
+        else:
+            logger.info("Persistent store not reachable; keeping local JSON file store.")
+            refuse("DATABASE_URL is set but the connection failed")
+    except RuntimeError:
+        raise
+    except Exception as e:  # noqa: BLE001 - must never break dev startup
+        logger.warning(f"Persistent store init skipped due to error: {type(e).__name__}")
+        refuse(f"init error: {type(e).__name__}")
 
 # Seeding Logic on startup
 @app.on_event("startup")
@@ -168,6 +264,23 @@ async def seed_database():
             "updated_at": datetime.utcnow()
         })
         logger.info(f"Seeded initial demo profile for {demo_phone}")
+
+@app.on_event("startup")
+async def assign_internal_user_ids():
+    """Give every existing account a stable, opaque internal_id.
+
+    Runs after seeding so newly created demo/admin users are included. Additive
+    only: accounts that already have one are left untouched and nothing is
+    deleted, so it is safe on every boot.
+    """
+    import user_identity
+    try:
+        added = await user_identity.backfill_collection(get_db()["users"])
+        if added:
+            logger.info(f"Assigned stable internal user ids to {added} existing account(s).")
+    except Exception as e:  # noqa: BLE001 - metadata must never block startup
+        logger.warning(f"Internal user id backfill skipped due to error: {type(e).__name__}")
+
 
 @app.on_event("startup")
 async def init_scheme_store():

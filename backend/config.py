@@ -34,8 +34,21 @@ class Settings:
     # Accepts a full asyncpg DSN, e.g.:
     #   postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres
     SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "").strip()
+    # Primary Postgres/Neon connection string for the verified-scheme store.
+    # Preferred over SUPABASE_DB_URL when both are set. Backend-only secret.
+    #   e.g. postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()
     # Master flag to disable the Postgres layer entirely (force the JSON file store).
     POSTGRES_ENABLED: bool = os.getenv("POSTGRES_ENABLED", "true").lower() not in ("0", "false", "no")
+
+    @property
+    def scheme_db_url(self) -> str:
+        """Resolved Postgres connection string for the scheme store.
+
+        Prefers DATABASE_URL and falls back to SUPABASE_DB_URL, so the existing
+        Supabase configuration keeps working unchanged.
+        """
+        return self.DATABASE_URL or self.SUPABASE_DB_URL
 
     # Auth / JWT
     JWT_SECRET: str = os.getenv("JWT_SECRET", "supersecretkeychangeinproduction12345")
@@ -44,6 +57,9 @@ class Settings:
 
     # Optional AI provider (chatbot explanations). Empty => safe code-based fallback.
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    # Chatbot model name (backend only). Set to a model your Gemini account supports.
+    # gemini-2.5-flash was retired for new keys; this default is currently served.
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview").strip() or "gemini-3-flash-preview"
 
     # External scheme-discovery agent/webhook (Priority 3 integration). Empty => disabled.
     DISCOVERY_WEBHOOK_URL: str = os.getenv(
